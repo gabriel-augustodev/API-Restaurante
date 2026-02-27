@@ -1,0 +1,230 @@
+// prisma/schema.prisma
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+}
+
+model RefreshToken {
+    id        String    @id @default(cuid())
+    token     String    @unique
+    userId    String
+    user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+    expiresAt DateTime
+    createdAt DateTime  @default(now())
+    revokedAt DateTime?
+}
+
+model Restaurante {
+    id                String              @id @default(cuid())
+    nome              String
+    descricao         String?
+    cnpj              String              @unique
+    telefone          String
+    email             String
+    enderecoId        String
+    endereco          Endereco            @relation(fields: [enderecoId], references: [id])
+    proprietarioId    String
+    proprietario      User                @relation(fields: [proprietarioId], references: [id])
+    horarioAbertura   String? // Formato: "HH:MM"
+    horarioFechamento String? // Formato: "HH:MM"
+    diasFuncionamento DiasFuncionamento[]
+    pedidos           Pedido[]
+    avaliacoes        Avaliacao[]
+    categorias        Categoria[]
+    produtos          Produto[]
+    taxaEntrega       Float               @default(0)
+    tempoMedioEntrega Int? // Em minutos
+    imagemUrl         String?
+    ativo             Boolean             @default(true)
+    createdAt         DateTime            @default(now())
+    updatedAt         DateTime            @updatedAt
+}
+
+// Enum de Status do Pedido
+enum StatusPedido {
+    AGUARDANDO_RESTAURANTE
+    CONFIRMADO
+    EM_PREPARO
+    PRONTO
+    SAIU_PARA_ENTREGA
+    ENTREGUE
+    CANCELADO
+}
+
+// Modelo de Pedido
+model Pedido {
+    id                String      @id @default(cuid())
+    clienteId         String
+    cliente           User        @relation("PedidosCliente", fields: [clienteId], references: [id])
+    restauranteId     String
+    restaurante       Restaurante @relation(fields: [restauranteId], references: [id])
+    enderecoEntregaId String
+    enderecoEntrega   Endereco    @relation("EnderecoEntrega", fields: [enderecoEntregaId], references: [id])
+
+    // Itens do pedido
+    itens ItemPedido[]
+
+    // Valores
+    subtotal    Float
+    taxaEntrega Float
+    total       Float
+
+    // Status
+    status      StatusPedido @default(AGUARDANDO_RESTAURANTE)
+    observacoes String?
+
+    // Controle de tempo
+    tempoPreparoEstimado Int? // Minutos estimados
+    tempoEntregaReal     Int? // Minutos reais (para métricas)
+    dataConfirmacao      DateTime?
+    dataInicioPreparo    DateTime?
+    dataPronto           DateTime?
+    dataSaidaEntrega     DateTime?
+    dataEntrega          DateTime?
+    dataCancelamento     DateTime?
+
+    // Relações
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    // Relação com avaliação
+    avaliacao Avaliacao?
+}
+
+// Modelo de Item do Pedido
+model ItemPedido {
+    id        String  @id @default(cuid())
+    pedidoId  String
+    pedido    Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+    produtoId String
+    produto   Produto @relation(fields: [produtoId], references: [id])
+
+    quantidade    Int
+    precoUnitario Float // Preço no momento do pedido (pode mudar depois)
+    observacoes   String? // Ex: "Sem cebola", "Ponto da carne"
+
+    createdAt DateTime @default(now())
+}
+
+model Avaliacao {
+    id            String      @id @default(cuid())
+    pedidoId      String      @unique
+    pedido        Pedido      @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+    restauranteId String
+    restaurante   Restaurante @relation(fields: [restauranteId], references: [id])
+    clienteId     String
+    cliente       User        @relation(fields: [clienteId], references: [id])
+
+    nota       Int // Validação 1-5 deve ser feita no controller/service
+    comentario String?
+
+    createdAt DateTime @default(now())
+}
+
+model Produto {
+    id            String       @id @default(cuid())
+    restauranteId String
+    restaurante   Restaurante  @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+    categoriaId   String?
+    categoria     Categoria?   @relation(fields: [categoriaId], references: [id], onDelete: SetNull)
+    nome          String
+    descricao     String?
+    preco         Float
+    disponivel    Boolean      @default(true)
+    destaque      Boolean      @default(false)
+    imagemUrl     String?
+    itensPedido   ItemPedido[]
+    tempoPreparo  Int? // em minutos
+    ingredientes  String? // lista de ingredientes
+    createdAt     DateTime     @default(now())
+    updatedAt     DateTime     @updatedAt
+
+    @@unique([restauranteId, nome]) // Não permite produtos com mesmo nome no mesmo restaurante
+}
+
+model Categoria {
+    id            String      @id @default(cuid())
+    restauranteId String
+    restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+    nome          String
+    descricao     String?
+    ordem         Int         @default(0)
+    produtos      Produto[]
+    createdAt     DateTime    @default(now())
+    updatedAt     DateTime    @updatedAt
+
+    @@unique([restauranteId, nome]) // Não permite categorias duplicadas no mesmo restaurante
+}
+
+model DiasFuncionamento {
+    id            String      @id @default(cuid())
+    restauranteId String
+    restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+    diaSemana     DiaSemana
+    aberto        Boolean     @default(true)
+    horarioAbre   String? // "09:00"
+    horarioFecha  String? // "22:00"
+}
+
+enum DiaSemana {
+    SEGUNDA
+    TERCA
+    QUARTA
+    QUINTA
+    SEXTA
+    SABADO
+    DOMINGO
+}
+
+model User {
+    id            String         @id @default(cuid())
+    email         String         @unique
+    senhaHash     String
+    nome          String
+    telefone      String?
+    role          Role           @default(CLIENTE)
+    enderecos     Endereco[]
+    pedidos       Pedido[]       @relation("PedidosCliente")
+    restaurantes  Restaurante[]
+    refreshTokens RefreshToken[]
+    avaliacoes    Avaliacao[] // ← ADICIONADO: relação com avaliações
+    createdAt     DateTime       @default(now())
+    updatedAt     DateTime       @updatedAt
+}
+
+model Endereco {
+    id             String        @id @default(cuid())
+    userId         String
+    user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+    cep            String
+    logradouro     String
+    numero         String
+    complemento    String?
+    bairro         String
+    cidade         String
+    estado         String
+    isPrincipal    Boolean       @default(false)
+    createdAt      DateTime      @default(now())
+    updatedAt      DateTime      @updatedAt
+    pedidosEntrega Pedido[]      @relation("EnderecoEntrega") // ← RELACIONADO com Pedido
+    restaurantes   Restaurante[]
+}
+
+model CepCache {
+    cep        String   @id
+    logradouro String
+    bairro     String
+    cidade     String
+    estado     String
+    updatedAt  DateTime @updatedAt
+}
+
+enum Role {
+    ADMIN
+    DONO_RESTAURANTE
+    ENTREGADOR
+    CLIENTE
+}
