@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import swaggerUi from 'swagger-ui-express';
+import { specs } from './config/swagger';
 
 dotenv.config();
 
@@ -33,6 +35,19 @@ app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// ========= Swagger =========
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
+    explorer: true,
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: 'API Delivery - Documentação'
+}));
+
+// Rota para JSON do OpenAPI
+app.get('/swagger.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(specs);
+});
+
 // Importar rotas
 import cepRoutes from './routes/cep.routes';
 import authRoutes from './routes/auth.routes';
@@ -59,4 +74,6 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 
 app.listen(port, () => {
     console.log(`🚀 Servidor rodando na porta ${port}`);
+    console.log(`📚 Documentação Swagger: http://localhost:${port}/api-docs`);
+    console.log(`📄 JSON OpenAPI: http://localhost:${port}/swagger.json`);
 });
