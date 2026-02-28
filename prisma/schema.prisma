@@ -7,6 +7,60 @@ datasource db {
     provider = "postgresql"
 }
 
+// Enum de Tipo de Cupom
+enum TipoCupom {
+    PERCENTUAL
+    FIXO
+}
+
+// Modelo de Cupom
+model Cupom {
+    id                  String    @id @default(cuid())
+    codigo              String    @unique // Ex: "BEMVINDO10"
+    descricao           String?
+    tipo                TipoCupom
+    valor               Float // 10 para 10% ou R$10,00
+    valorMinimoPedido   Float? // Pedido mínimo para usar o cupom
+    valorMaximoDesconto Float? // Desconto máximo (para percentual)
+
+    // Validade e limites
+    dataValidade      DateTime
+    maxUsos           Int? // Limite total de usos
+    maxUsosPorUsuario Int? // Limite por usuário
+    usosAtuais        Int      @default(0)
+
+    // Escopo (opcional - se for específico de um restaurante)
+    restauranteId String?
+    restaurante   Restaurante? @relation(fields: [restauranteId], references: [id], onDelete: SetNull)
+
+    // Primeiro pedido apenas?
+    apenasPrimeiroPedido Boolean @default(false)
+
+    // Status
+    ativo Boolean @default(true)
+
+    // Relações
+    usos      CupomUso[]
+    createdAt DateTime   @default(now())
+    updatedAt DateTime   @updatedAt
+}
+
+// Controle de usos do cupom
+model CupomUso {
+    id        String @id @default(cuid())
+    cupomId   String
+    cupom     Cupom  @relation(fields: [cupomId], references: [id], onDelete: Cascade)
+    usuarioId String
+    usuario   User   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+    pedidoId  String @unique
+    pedido    Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+    // Valor do desconto aplicado
+    valorDesconto Float
+
+    createdAt DateTime @default(now())
+}
+
 model RefreshToken {
     id        String    @id @default(cuid())
     token     String    @unique
@@ -35,6 +89,7 @@ model Restaurante {
     avaliacoes        Avaliacao[]
     categorias        Categoria[]
     produtos          Produto[]
+    cupons            Cupom[] // ← RELAÇÃO COM CUPONS
     taxaEntrega       Float               @default(0)
     tempoMedioEntrega Int? // Em minutos
     imagemUrl         String?
@@ -92,6 +147,9 @@ model Pedido {
 
     // Relação com avaliação
     avaliacao Avaliacao?
+
+    // Relação com cupom
+    cupomUso CupomUso? // ← RELAÇÃO COM CUPOM USO
 }
 
 // Modelo de Item do Pedido
@@ -190,7 +248,8 @@ model User {
     pedidos       Pedido[]       @relation("PedidosCliente")
     restaurantes  Restaurante[]
     refreshTokens RefreshToken[]
-    avaliacoes    Avaliacao[] // ← ADICIONADO: relação com avaliações
+    avaliacoes    Avaliacao[]
+    usosCupons    CupomUso[] // ← RELAÇÃO COM CUPONS USADOS
     createdAt     DateTime       @default(now())
     updatedAt     DateTime       @updatedAt
 }
@@ -209,7 +268,7 @@ model Endereco {
     isPrincipal    Boolean       @default(false)
     createdAt      DateTime      @default(now())
     updatedAt      DateTime      @updatedAt
-    pedidosEntrega Pedido[]      @relation("EnderecoEntrega") // ← RELACIONADO com Pedido
+    pedidosEntrega Pedido[]      @relation("EnderecoEntrega")
     restaurantes   Restaurante[]
 }
 

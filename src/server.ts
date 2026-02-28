@@ -57,6 +57,7 @@ import categoriaRoutes from './routes/categoria.routes';
 import produtoRoutes from './routes/produto.routes';
 import pedidoRoutes from './routes/pedido.routes';
 import uploadRoutes from './routes/upload.routes';
+import cupomRoutes from './routes/cupom.routes';
 
 // Usar rotas
 app.use('/api/cep', cepRoutes);
@@ -67,6 +68,7 @@ app.use('/api/restaurantes/:restauranteId/categorias', categoriaRoutes)
 app.use('/api/restaurantes/:restauranteId/produtos', produtoRoutes)
 app.use('/api/pedidos', pedidoRoutes)
 app.use('/api/upload', uploadRoutes);
+app.use('/api/cupons', cupomRoutes);
 
 // Tratamento de erros global
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
