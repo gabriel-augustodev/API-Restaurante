@@ -1,4 +1,6 @@
 import express, { Application } from 'express';
+import http from 'http';
+import { Server as SocketServer } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
@@ -13,17 +15,26 @@ dotenv.config();
 // Configuração do pool com SSL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false, // Essencial para Neon
-    },
-})
+    ssl: { rejectUnauthorized: false },
+});
 
-// Criar adapter e cliente Prisma
-const adapter = new PrismaPg(pool)
-export const prisma = new PrismaClient({ adapter })
+const adapter = new PrismaPg(pool);
+export const prisma = new PrismaClient({ adapter });
 
 const app: Application = express();
 const port = process.env.PORT || 3000;
+
+// Criar servidor HTTP
+const server = http.createServer(app);
+
+// Configurar Socket.io
+export const io = new SocketServer(server, {
+    cors: {
+        origin: "*", // Em produção, restrinja para seu domínio
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
 
 // Middlewares
 app.use(helmet());
@@ -35,18 +46,12 @@ app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// ========= Swagger =========
+// Swagger
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
     explorer: true,
     customCss: '.swagger-ui .topbar { display: none }',
     customSiteTitle: 'API Delivery - Documentação'
 }));
-
-// Rota para JSON do OpenAPI
-app.get('/swagger.json', (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    res.send(specs);
-});
 
 // Importar rotas
 import cepRoutes from './routes/cep.routes';
@@ -64,11 +69,41 @@ app.use('/api/cep', cepRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/enderecos', enderecoRoutes);
 app.use('/api/restaurantes', restauranteRoutes);
-app.use('/api/restaurantes/:restauranteId/categorias', categoriaRoutes)
-app.use('/api/restaurantes/:restauranteId/produtos', produtoRoutes)
-app.use('/api/pedidos', pedidoRoutes)
+app.use('/api/restaurantes/:restauranteId/categorias', categoriaRoutes);
+app.use('/api/restaurantes/:restauranteId/produtos', produtoRoutes);
+app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/cupons', cupomRoutes);
+
+// Configuração dos WebSockets
+io.on('connection', (socket) => {
+    console.log('🔌 Novo cliente conectado:', socket.id);
+
+    // Cliente entra em uma sala específica do pedido
+    socket.on('entrar-pedido', (pedidoId: string) => {
+        socket.join(`pedido-${pedidoId}`);
+        console.log(`Cliente ${socket.id} entrou na sala pedido-${pedidoId}`);
+    });
+
+    // Restaurante entra em uma sala para receber novos pedidos
+    socket.on('entrar-restaurante', (restauranteId: string) => {
+        socket.join(`restaurante-${restauranteId}`);
+        console.log(`Restaurante ${socket.id} entrou na sala restaurante-${restauranteId}`);
+    });
+
+    // Cliente/Entregador compartilha localização (opcional)
+    socket.on('compartilhar-localizacao', (data: { pedidoId: string, lat: number, lng: number }) => {
+        socket.to(`pedido-${data.pedidoId}`).emit('localizacao-atualizada', {
+            pedidoId: data.pedidoId,
+            lat: data.lat,
+            lng: data.lng
+        });
+    });
+
+    socket.on('disconnect', () => {
+        console.log('🔌 Cliente desconectado:', socket.id);
+    });
+});
 
 // Tratamento de erros global
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -76,8 +111,9 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
     res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
-app.listen(port, () => {
+// Usar server.listen em vez de app.listen
+server.listen(port, () => {
     console.log(`🚀 Servidor rodando na porta ${port}`);
+    console.log(`🔌 WebSockets disponível em ws://localhost:${port}`);
     console.log(`📚 Documentação Swagger: http://localhost:${port}/api-docs`);
-    console.log(`📄 JSON OpenAPI: http://localhost:${port}/swagger.json`);
 });

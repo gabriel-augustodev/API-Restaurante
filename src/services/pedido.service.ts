@@ -1,5 +1,9 @@
 import { prisma } from '../server'
 import { StatusPedido } from '@prisma/client'
+import { SocketService } from './socket.service' // ← ADICIONADO
+import { CupomService } from './cupom.service'   // ← ADICIONADO
+
+const cupomService = new CupomService()
 
 export class PedidoService {
     async listarPorCliente(clienteId: string) {
@@ -22,6 +26,11 @@ export class PedidoService {
                                 imagemUrl: true
                             }
                         }
+                    }
+                },
+                cupomUso: {  // ← ADICIONADO: incluir cupom usado
+                    include: {
+                        cupom: true
                     }
                 }
             },
@@ -66,6 +75,11 @@ export class PedidoService {
                             }
                         }
                     }
+                },
+                cupomUso: {  // ← ADICIONADO: incluir cupom usado
+                    include: {
+                        cupom: true
+                    }
                 }
             },
             orderBy: { createdAt: 'desc' }
@@ -105,6 +119,11 @@ export class PedidoService {
                             }
                         }
                     }
+                },
+                cupomUso: {  // ← ADICIONADO: incluir cupom usado
+                    include: {
+                        cupom: true
+                    }
                 }
             }
         })
@@ -134,6 +153,7 @@ export class PedidoService {
             observacoes?: string
         }[]
         observacoes?: string
+        cupomCodigo?: string  // ← ADICIONADO: cupom opcional
     }) {
         // Verificar se restaurante existe e está ativo
         const restaurante = await prisma.restaurante.findFirst({
@@ -187,10 +207,34 @@ export class PedidoService {
             })
         }
 
-        const total = subtotal + restaurante.taxaEntrega
+        let total = subtotal + restaurante.taxaEntrega
+        let cupomAplicado = null
+
+        // 🔥 NOVO: Aplicar cupom se informado
+        if (data.cupomCodigo) {
+            try {
+                const validacao = await cupomService.validar({
+                    codigo: data.cupomCodigo,
+                    usuarioId: clienteId,
+                    valorPedido: subtotal,
+                    restauranteId: data.restauranteId
+                });
+
+                if (validacao.valido) {
+                    cupomAplicado = validacao;
+                    total = subtotal + restaurante.taxaEntrega - validacao.valorDesconto!;
+
+                    // Garantir que total não seja negativo
+                    if (total < 0) total = 0;
+                }
+            } catch (error) {
+                // Se cupom inválido, apenas ignora (não interrompe pedido)
+                console.log('Cupom inválido:', error);
+            }
+        }
 
         // Criar pedido
-        return await prisma.pedido.create({
+        const pedido = await prisma.pedido.create({
             data: {
                 clienteId,
                 restauranteId: data.restauranteId,
@@ -210,9 +254,32 @@ export class PedidoService {
                     }
                 },
                 restaurante: true,
-                enderecoEntrega: true
+                enderecoEntrega: true,
+                cliente: {
+                    select: {
+                        id: true,
+                        nome: true,
+                        telefone: true
+                    }
+                }
             }
         })
+
+        // 🔥 NOVO: Registrar uso do cupom se foi aplicado
+        if (cupomAplicado) {
+            await cupomService.aplicar({
+                codigo: data.cupomCodigo!,
+                usuarioId: clienteId,
+                valorPedido: subtotal,
+                restauranteId: data.restauranteId,
+                pedidoId: pedido.id
+            });
+        }
+
+        // 🔌 WEBSOCKET: Notificar restaurante sobre novo pedido
+        SocketService.notificarNovoPedido(pedido);
+
+        return pedido
     }
 
     async atualizarStatus(id: string, restauranteId: string, proprietarioId: string, novoStatus: StatusPedido) {
@@ -222,10 +289,10 @@ export class PedidoService {
                 id: restauranteId,
                 proprietarioId
             }
-        })
+        });
 
         if (!restaurante) {
-            throw new Error('Restaurante não encontrado ou não pertence a você')
+            throw new Error('Restaurante não encontrado ou não pertence a você');
         }
 
         // Buscar pedido
@@ -234,10 +301,10 @@ export class PedidoService {
                 id,
                 restauranteId
             }
-        })
+        });
 
         if (!pedido) {
-            throw new Error('Pedido não encontrado')
+            throw new Error('Pedido não encontrado');
         }
 
         // Validar transições de status
@@ -249,44 +316,70 @@ export class PedidoService {
             SAIU_PARA_ENTREGA: ['ENTREGUE'],
             ENTREGUE: [],
             CANCELADO: []
-        }
+        };
 
-        if (!statusValidos[pedido.status].includes(novoStatus)) {
-            throw new Error(`Transição de ${pedido.status} para ${novoStatus} não permitida`)
+        if (!statusValidos[pedido.status]?.includes(novoStatus)) {
+            throw new Error(`Transição de ${pedido.status} para ${novoStatus} não permitida`);
         }
 
         // Preparar dados de atualização com timestamps
-        const updateData: any = { status: novoStatus }
+        const updateData: any = { status: novoStatus };
 
         switch (novoStatus) {
             case 'CONFIRMADO':
-                updateData.dataConfirmacao = new Date()
-                break
+                updateData.dataConfirmacao = new Date();
+                break;
             case 'EM_PREPARO':
-                updateData.dataInicioPreparo = new Date()
-                break
+                updateData.dataInicioPreparo = new Date();
+                break;
             case 'PRONTO':
-                updateData.dataPronto = new Date()
-                break
+                updateData.dataPronto = new Date();
+                break;
             case 'SAIU_PARA_ENTREGA':
-                updateData.dataSaidaEntrega = new Date()
-                break
+                updateData.dataSaidaEntrega = new Date();
+                break;
             case 'ENTREGUE':
-                updateData.dataEntrega = new Date()
-                break
+                updateData.dataEntrega = new Date();
+                break;
             case 'CANCELADO':
-                updateData.dataCancelamento = new Date()
-                break
+                updateData.dataCancelamento = new Date();
+                break;
         }
 
-        return await prisma.pedido.update({
+        console.log('📝 Atualizando pedido:', id, 'para', novoStatus);
+
+        const pedidoAtualizado = await prisma.pedido.update({
             where: { id },
             data: updateData,
             include: {
                 itens: true,
-                cliente: true
+                cliente: {
+                    select: {
+                        id: true,
+                        nome: true,
+                        telefone: true
+                    }
+                },
+                restaurante: {
+                    select: {
+                        id: true,
+                        nome: true
+                    }
+                }
             }
-        })
+        });
+
+        console.log('✅ Pedido atualizado, chamando WebSocket...');
+
+        // 🔌 NOTIFICAR VIA WEBSOCKET
+        try {
+            SocketService.notificarAtualizacaoStatus(pedidoAtualizado);
+            console.log('✅ WebSocket notificado com sucesso');
+        } catch (error) {
+            console.error('❌ Erro ao notificar WebSocket:', error);
+        }
+
+        return pedidoAtualizado;
     }
 
     async cancelarPedido(id: string, clienteId: string) {
@@ -306,12 +399,87 @@ export class PedidoService {
             throw new Error('Não é possível cancelar pedido após confirmação')
         }
 
-        return await prisma.pedido.update({
+        const pedidoCancelado = await prisma.pedido.update({
             where: { id },
             data: {
                 status: 'CANCELADO',
                 dataCancelamento: new Date()
+            },
+            include: {
+                cliente: {
+                    select: {
+                        id: true,
+                        nome: true
+                    }
+                },
+                restaurante: {
+                    select: {
+                        id: true,
+                        nome: true
+                    }
+                }
             }
         })
+
+        // 🔌 WEBSOCKET: Notificar restaurante que pedido foi cancelado
+        SocketService.notificarAtualizacaoStatus(pedidoCancelado);
+
+        return pedidoCancelado
+    }
+
+    // 🔥 NOVO: Método para atualizar tempo de preparo
+    async atualizarTempoPreparo(id: string, restauranteId: string, proprietarioId: string, minutos: number) {
+        // Verificar permissão
+        const restaurante = await prisma.restaurante.findFirst({
+            where: {
+                id: restauranteId,
+                proprietarioId
+            }
+        });
+
+        if (!restaurante) {
+            throw new Error('Acesso negado');
+        }
+
+        const pedido = await prisma.pedido.update({
+            where: { id },
+            data: { tempoPreparoEstimado: minutos },
+            include: {
+                cliente: {
+                    select: {
+                        id: true
+                    }
+                }
+            }
+        });
+
+        // 🔌 WEBSOCKET: Notificar cliente sobre tempo de preparo
+        SocketService.notificarTempoPreparo(id, minutos);
+
+        return pedido;
+    }
+
+    // 🔥 NOVO: Método para buscar pedidos com cupons
+    async listarComCupons(clienteId: string) {
+        return await prisma.pedido.findMany({
+            where: {
+                clienteId,
+                cupomUso: { isNot: null }
+            },
+            include: {
+                cupomUso: {
+                    include: {
+                        cupom: true
+                    }
+                },
+                restaurante: {
+                    select: {
+                        id: true,
+                        nome: true
+                    }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
     }
 }
