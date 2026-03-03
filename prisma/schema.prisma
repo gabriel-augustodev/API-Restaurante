@@ -79,6 +79,8 @@ model Restaurante {
     telefone          String
     email             String
     enderecoId        String
+    latitude          Float?
+    longitude         Float?
     endereco          Endereco            @relation(fields: [enderecoId], references: [id])
     proprietarioId    String
     proprietario      User                @relation(fields: [proprietarioId], references: [id])
@@ -264,6 +266,8 @@ model Endereco {
     complemento    String?
     bairro         String
     cidade         String
+    latitude       Float?
+    longitude      Float?
     estado         String
     isPrincipal    Boolean       @default(false)
     createdAt      DateTime      @default(now())

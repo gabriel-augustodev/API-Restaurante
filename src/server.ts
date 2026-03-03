@@ -63,6 +63,7 @@ import produtoRoutes from './routes/produto.routes';
 import pedidoRoutes from './routes/pedido.routes';
 import uploadRoutes from './routes/upload.routes';
 import cupomRoutes from './routes/cupom.routes';
+import geolocationRoutes from './routes/geolocation.routes';
 
 // Usar rotas
 app.use('/api/cep', cepRoutes);
@@ -74,6 +75,7 @@ app.use('/api/restaurantes/:restauranteId/produtos', produtoRoutes);
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/cupons', cupomRoutes);
+app.use('/api/geolocation', geolocationRoutes);
 
 // Configuração dos WebSockets
 io.on('connection', (socket) => {
