@@ -30,13 +30,20 @@ const server = http.createServer(app);
 // Configurar Socket.io
 export const io = new SocketServer(server, {
     cors: {
-        origin: "*", // Em produção, restrinja para seu domínio
+        origin: "*",
         methods: ["GET", "POST"],
         credentials: true
     }
 });
 
-// Middlewares
+// 🔴 ATENÇÃO: Webhook do Stripe deve vir ANTES de express.json()
+// Importar rotas que precisam de tratamento especial
+import stripeRoutes from './routes/stripe.routes';
+
+// ⚠️ CORREÇÃO: Aplicar express.raw APENAS na rota do webhook
+app.use('/api/stripe', stripeRoutes);
+
+// Middlewares padrão (DEPOIS do webhook)
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
@@ -53,7 +60,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
     customSiteTitle: 'API Delivery - Documentação'
 }));
 
-// Importar rotas
+// Importar outras rotas
 import cepRoutes from './routes/cep.routes';
 import authRoutes from './routes/auth.routes';
 import enderecoRoutes from './routes/endereco.routes';
@@ -65,7 +72,9 @@ import uploadRoutes from './routes/upload.routes';
 import cupomRoutes from './routes/cupom.routes';
 import geolocationRoutes from './routes/geolocation.routes';
 
-// Usar rotas
+// Usar rotas (as outras rotas do Stripe) - DEPOIS do express.json
+app.use('/api/stripe', stripeRoutes); // Checkout, cancelar, etc (usam JSON normal)
+
 app.use('/api/cep', cepRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/enderecos', enderecoRoutes);
@@ -81,19 +90,16 @@ app.use('/api/geolocation', geolocationRoutes);
 io.on('connection', (socket) => {
     console.log('🔌 Novo cliente conectado:', socket.id);
 
-    // Cliente entra em uma sala específica do pedido
     socket.on('entrar-pedido', (pedidoId: string) => {
         socket.join(`pedido-${pedidoId}`);
         console.log(`Cliente ${socket.id} entrou na sala pedido-${pedidoId}`);
     });
 
-    // Restaurante entra em uma sala para receber novos pedidos
     socket.on('entrar-restaurante', (restauranteId: string) => {
         socket.join(`restaurante-${restauranteId}`);
         console.log(`Restaurante ${socket.id} entrou na sala restaurante-${restauranteId}`);
     });
 
-    // Cliente/Entregador compartilha localização (opcional)
     socket.on('compartilhar-localizacao', (data: { pedidoId: string, lat: number, lng: number }) => {
         socket.to(`pedido-${data.pedidoId}`).emit('localizacao-atualizada', {
             pedidoId: data.pedidoId,
@@ -109,7 +115,13 @@ io.on('connection', (socket) => {
 
 // Tratamento de erros global
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error(err.stack);
+    console.error('❌ Erro:', err.stack);
+
+    // Verificar se é erro do Stripe
+    if (err.message.includes('Stripe')) {
+        return res.status(400).json({ error: err.message });
+    }
+
     res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
@@ -118,4 +130,5 @@ server.listen(port, () => {
     console.log(`🚀 Servidor rodando na porta ${port}`);
     console.log(`🔌 WebSockets disponível em ws://localhost:${port}`);
     console.log(`📚 Documentação Swagger: http://localhost:${port}/api-docs`);
+    console.log(`💳 Stripe webhook: http://localhost:${port}/api/stripe/webhook`);
 });
